@@ -90,7 +90,7 @@ impl<'a> Input<'a> {
         let mut d = self.data;
         let mut cs = vec![];
         let start : usize;
-        let mut end = 0;
+        let mut end;
 
         match d {
             [] => return Err(ParseError::EndOfFile("parse_symbol".to_string())),
@@ -98,6 +98,7 @@ impl<'a> Input<'a> {
                 d = rest;
                 cs.push(x);
                 start = *i;
+                end = start;
             },
             [(i, x), ..] => return Err(ParseError::ErrorAt(*i, format!("Encountered {} in parse_symbol", x))),
         }
@@ -125,7 +126,7 @@ impl<'a> Input<'a> {
         let mut d = self.data;
         let mut cs = vec![];
         let start : usize;
-        let mut end = 0;
+        let mut end;
 
         match d {
             [] => return Err(ParseError::EndOfFile("parse_number".to_string())),
@@ -135,6 +136,7 @@ impl<'a> Input<'a> {
                 d = rest;
                 cs.push(x);
                 start = *i;
+                end = start;
             },
             [(i, x), ..] => return Err(ParseError::ErrorAt(*i, format!("Encountered {} in parse_number", x))),
         }
@@ -332,6 +334,54 @@ impl<'a> Input<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn should_parse_single_character_symbol_second() -> Result<(), ParseError> {
+        let mut input = Input { data: &"::<>:: b d".char_indices().collect::<Vec<(usize, char)>>() };
+        input.expect("::<>::")?;
+        let sym = input.parse_symbol()?;
+        assert_eq!( sym.value, "b" );
+        assert_eq!( sym.start, 7 );
+        assert_eq!( sym.end, 7 );
+        assert_eq!( input.data.into_iter().map(|(_,x)| x).collect::<String>(), " d".to_string() ); 
+        Ok(())
+    }
+
+    #[test]
+    fn should_parse_double_character_symbol_second() -> Result<(), ParseError> {
+        let mut input = Input { data: &"::<>:: bb d".char_indices().collect::<Vec<(usize, char)>>() };
+        input.expect("::<>::")?;
+        let sym = input.parse_symbol()?;
+        assert_eq!( sym.value, "bb" );
+        assert_eq!( sym.start, 7 );
+        assert_eq!( sym.end, 8 );
+        assert_eq!( input.data.into_iter().map(|(_,x)| x).collect::<String>(), " d".to_string() ); 
+        Ok(())
+    }
+
+    #[test]
+    fn should_parse_single_digit_number_second() -> Result<(), ParseError> {
+        let mut input = Input { data: &"::<>:: 1 d".char_indices().collect::<Vec<(usize, char)>>() };
+        input.expect("::<>::")?;
+        let sym = input.parse_number()?;
+        assert_eq!( sym.value, "1" );
+        assert_eq!( sym.start, 7 );
+        assert_eq!( sym.end, 7 );
+        assert_eq!( input.data.into_iter().map(|(_,x)| x).collect::<String>(), " d".to_string() ); 
+        Ok(())
+    }
+
+    #[test]
+    fn should_parse_double_digit_number_second() -> Result<(), ParseError> {
+        let mut input = Input { data: &"::<>:: 11 d".char_indices().collect::<Vec<(usize, char)>>() };
+        input.expect("::<>::")?;
+        let sym = input.parse_number()?;
+        assert_eq!( sym.value, "11" );
+        assert_eq!( sym.start, 7 );
+        assert_eq!( sym.end, 8 );
+        assert_eq!( input.data.into_iter().map(|(_,x)| x).collect::<String>(), " d".to_string() ); 
+        Ok(())
+    }
 
     #[test]
     fn should_expect_string() -> Result<(), ParseError> {
