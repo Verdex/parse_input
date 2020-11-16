@@ -120,6 +120,8 @@ impl<'a> Input<'a> {
         Ok( PSym { start, end, value: cs.into_iter().collect::<String>() } )
     }
 
+    
+
     pub fn parse_number(&mut self) -> Result<PSym, ParseError> { 
         self.clear()?;
         
@@ -131,7 +133,6 @@ impl<'a> Input<'a> {
         match d {
             [] => return Err(ParseError::EndOfFile("parse_number".to_string())),
             [(i, x), rest @ ..] if x.is_numeric() 
-                                || *x == '.' 
                                 || *x == '-' => {
                 d = rest;
                 cs.push(x);
@@ -157,9 +158,14 @@ impl<'a> Input<'a> {
             }
         }
 
-        self.data = d;
+        if !cs.last().unwrap().is_numeric() {
+           Err( ParseError::ErrorAt(end, "parse_number requires last character to be a numeric".to_string()) ) 
+        }
+        else {
+            self.data = d;
 
-        Ok( PSym { start, end, value: cs.into_iter().collect::<String>() } )
+            Ok( PSym { start, end, value: cs.into_iter().collect::<String>() } )
+        }
     }
 
     pub fn parse_string(&mut self) -> Result<PSym, ParseError> {
@@ -460,17 +466,6 @@ mod test {
         assert_eq!( start, 0 );
         assert_eq!( end, 4 );
         assert_eq!( number, "12.34" );
-        assert_eq!( input.data.into_iter().map(|(_,x)| x).collect::<String>(), "".to_string() ); 
-        Ok(())
-    }
-
-    #[test]
-    fn should_parse_float_starting_with_dot() -> Result<(), ParseError> {
-        let mut input = Input { data: &".01".char_indices().collect::<Vec<(usize, char)>>() };
-        let PSym { start, end, value: number } = input.parse_number()?;
-        assert_eq!( start, 0 );
-        assert_eq!( end, 2 );
-        assert_eq!( number, ".01" );
         assert_eq!( input.data.into_iter().map(|(_,x)| x).collect::<String>(), "".to_string() ); 
         Ok(())
     }
