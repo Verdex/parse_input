@@ -69,9 +69,7 @@ impl<'a> Input<'a> {
         self.data = restore_point.data 
     }
 
-    pub fn expect(&mut self,  s : &str) -> Result<(), ParseError>  {
-        self.clear()?;
-
+    fn raw_expect(&mut self,  s : &str) -> Result<(), ParseError>  {
         let mut d = self.data;
         for c in s.chars() {
             match d {
@@ -82,6 +80,11 @@ impl<'a> Input<'a> {
         }
         self.data = d;
         Ok(())
+    }
+
+    pub fn expect(&mut self,  s : &str) -> Result<(), ParseError>  {
+        self.clear()?;
+        self.raw_expect(s)
     }
 
     pub fn parse_symbol(&mut self) -> Result<PSym, ParseError> {
@@ -120,51 +123,97 @@ impl<'a> Input<'a> {
         Ok( PSym { start, end, value: cs.into_iter().collect::<String>() } )
     }
 
-    
-
-    pub fn parse_number(&mut self) -> Result<PSym, ParseError> { 
-        self.clear()?;
-        
-        let mut d = self.data;
-        let mut cs = vec![];
-        let start : usize;
-        let mut end;
-
-        match d {
-            [] => return Err(ParseError::EndOfFile("parse_number".to_string())),
-            [(i, x), rest @ ..] if x.is_numeric() 
-                                || *x == '-' => {
-                d = rest;
-                cs.push(x);
-                start = *i;
-                end = start;
-            },
-            [(i, x), ..] => return Err(ParseError::ErrorAt(*i, format!("Encountered {} in parse_number", x))),
+    pub fn parse_number(&mut self) -> Result<PSym, ParseError> {
+        fn parse_digit(input : &mut Input) -> Result<char, ParseError> {
+            input.choice( &[ |i| { i.raw_expect("0")?; Ok('0') }
+                           , |i| { i.raw_expect("1")?; Ok('1') }
+                           , |i| { i.raw_expect("2")?; Ok('2') }
+                           , |i| { i.raw_expect("3")?; Ok('3') }
+                           , |i| { i.raw_expect("4")?; Ok('4') }
+                           , |i| { i.raw_expect("5")?; Ok('5') }
+                           , |i| { i.raw_expect("6")?; Ok('6') }
+                           , |i| { i.raw_expect("7")?; Ok('7') }
+                           , |i| { i.raw_expect("8")?; Ok('8') }
+                           , |i| { i.raw_expect("9")?; Ok('9') }
+                           ] )
         }
 
-        loop {
-            match d {
-                [] => break, 
-                [(i, x), rest @ ..] if x.is_numeric() 
-                                    || *x == '.' 
-                                    || *x == '-' 
-                                    || *x == 'E'
-                                    || *x == 'e' => {
-                    d = rest;
-                    cs.push(x);
-                    end = *i;
-                },
-                [_, ..] => break, 
+        fn parse_lead(input : &mut Input) -> Result<char, ParseError> {
+            input.choice( &[ |i| { i.expect("-")?; Ok('-') }
+                           , parse_digit 
+                           ])
+        }
+
+        fn parse_scientific_notation(input : &mut Input, s : usize) -> PSym {
+            fn p(input : &mut Input) -> Result<Vec<char>, ParseError> {
+                let mut e = vec![input.choice( &[ |i| { i.raw_expect("E")?; Ok('E') }
+                                                , |i| { i.raw_expect("e")?; Ok('e') }
+                                                ] )?];
+                let neg = input.maybe( |i| i.raw_expect("-") );
+                let mut digits = input.one_or_more(parse_digit)?;  
+    
+                if matches!( neg, Some(_) ) {
+                    e.push('-');
+                }
+
+                e.append(&mut digits);
+
+                Ok(e)
+            }
+
+            match p(input) {
+                Err(_) => PSym { value: "".to_string(), start: s, end: s },
+                Ok(x) => vec_to_sym(x, s + 1),
             }
         }
 
-        if !cs.last().unwrap().is_numeric() {
-           Err( ParseError::ErrorAt(end, "parse_number requires last character to be a numeric".to_string()) ) 
+        fn vec_to_sym(cs : Vec<char>, s : usize) -> PSym {
+            let end = cs.len() + s - 1;
+            PSym { value: cs.into_iter().collect::<String>(), start: s, end }
         }
-        else {
-            self.data = d;
 
-            Ok( PSym { start, end, value: cs.into_iter().collect::<String>() } )
+        self.clear()?;
+
+        let start = match self.data {
+            [] => return Err(ParseError::EndOfFile("parse_number".to_string())),
+            [(i, _), ..] => *i
+        };
+
+        let mut lead = vec![parse_lead(self)?];
+        let mut lead_rest = self.zero_or_more(parse_digit)?;
+        lead.append(&mut lead_rest);
+        let lead = vec_to_sym(lead, start);
+
+        let maybe_decimal = self.maybe( |i| {
+            i.expect(".")?;
+            i.one_or_more(parse_digit)
+        } );
+        
+        match maybe_decimal {
+            Some(decimal) => {
+                let decimal = vec_to_sym(decimal, lead.end + 1);
+                let sn = parse_scientific_notation(self, decimal.end + 1); 
+
+                Ok(PSym { value: format!( "{}.{}{}"
+                                        , lead.value
+                                        , decimal.value
+                                        , sn.value
+                                        )
+                        , start
+                        , end: sn.end
+                        })
+            }
+            None => {
+                let sn = parse_scientific_notation(self, lead.end); 
+
+                Ok(PSym { value: format!( "{}{}"
+                                        , lead.value
+                                        , sn.value
+                                        )
+                        , start
+                        , end: sn.end
+                        })
+            }
         }
     }
 
@@ -449,6 +498,18 @@ mod test {
     }
 
     #[test]
+    fn should_parse_int_followed_by_dot() -> Result<(), ParseError> {
+        let mut input = Input { data: &"1234.".char_indices().collect::<Vec<(usize, char)>>() };
+        let PSym { start, end, value: number } = input.parse_number()?;
+        input.expect(".")?;
+        assert_eq!( start, 0 );
+        assert_eq!( end, 3 );
+        assert_eq!( number, "1234" );
+        assert_eq!( input.data.into_iter().map(|(_,x)| x).collect::<String>(), "".to_string() ); 
+        Ok(())
+    }
+
+    #[test]
     fn should_parse_int() -> Result<(), ParseError> {
         let mut input = Input { data: &"1234".char_indices().collect::<Vec<(usize, char)>>() };
         let PSym { start, end, value: number } = input.parse_number()?;
@@ -472,11 +533,22 @@ mod test {
 
     #[test]
     fn should_parse_scientific_notation() -> Result<(), ParseError> {
-        let mut input = Input { data: &"1234e42.0".char_indices().collect::<Vec<(usize, char)>>() };
+        let mut input = Input { data: &"1234e42".char_indices().collect::<Vec<(usize, char)>>() };
         let PSym { start, end, value: number } = input.parse_number()?;
         assert_eq!( start, 0 );
-        assert_eq!( end, 8 );
-        assert_eq!( number, "1234e42.0" );
+        assert_eq!( end, 6 );
+        assert_eq!( number, "1234e42" );
+        assert_eq!( input.data.into_iter().map(|(_,x)| x).collect::<String>(), "".to_string() ); 
+        Ok(())
+    }
+
+    #[test]
+    fn should_parse_scientific_notation_on_float() -> Result<(), ParseError> {
+        let mut input = Input { data: &"1234.4321e42".char_indices().collect::<Vec<(usize, char)>>() };
+        let PSym { start, end, value: number } = input.parse_number()?;
+        assert_eq!( start, 0 );
+        assert_eq!( end, 11 );
+        assert_eq!( number, "1234.4321e42" );
         assert_eq!( input.data.into_iter().map(|(_,x)| x).collect::<String>(), "".to_string() ); 
         Ok(())
     }
@@ -486,6 +558,7 @@ mod test {
         let mut input = Input { data: &"1234E-42".char_indices().collect::<Vec<(usize, char)>>() };
         let PSym { start, end, value: number } = input.parse_number()?;
         assert_eq!( start, 0 );
+        println!("number {}", number);
         assert_eq!( end, 7 );
         assert_eq!( number, "1234E-42" );
         assert_eq!( input.data.into_iter().map(|(_,x)| x).collect::<String>(), "".to_string() ); 
